@@ -1,0 +1,589 @@
+---
+title: "5225: Network Analysis on Polotical blogs"
+author: Mingxuan Liu
+output: html_document
+---
+
+# Introduction
+```{r, echo = FALSE}
+library(igraph)
+library(blockmodels)
+library(networkD3)
+data <- read.graph("./polblogs.gml", format = "gml")
+data3d <- igraph_to_networkD3(data, group = V(data)$value, what = "both")
+forceNetwork(
+    Links = data3d$links, Nodes = data3d$nodes,
+    Source = "source", Target = "target", NodeID = "name",
+    Group = "group", width = 600, height = 500, charge = -5
+)
+```
+This is a huge network with 1490 nodes and 19090 edges, which is directed, multi-graph and unconnected. According to the plot above, we can see that there are two clusters, which are connected to each other, with many marginalized nodes. These facts are consistent with our intuition about polotical blogs. Without great loss of information, we use the simplified version of network noted as *g* to conduct following analysis.  
+```{R, echo= FALSE, results="hide"}
+summary(data)
+is.simple(data)
+is.connected(data)
+g <- simplify(data)
+A <- get.adjacency(g)
+A <- as.matrix(A)
+edge_density(g)
+diameter(g)
+mean_distance(g, unconnected = TRUE)
+```
+The whole density of *g* is 0.00857, average distance is 3.39018 and the diameter of the connected components is 9. The degree distribution is as below, which seems like a shape of power-law distribution. The degree distribution seems like a shape of power-law. The p-value obtained by Kolmogorov-Smirnov test is 0.98853 which is way larger than 0.05. Thus, we conclude that the degree distribution holds a shape of power-law and a heavy tail. We compute the parameter $\alpha=2.901$ via linear regression method and 3.93253 via mle. We use mle rather than linear regression for the reason that since d shouldn't be 0 otherwise log(d) won't be well-defined, we can only fit the tail from degree 1 in which case the $\alpha$ will be smaller than we fit the whole data. In real data, there's high possibility $\alpha$ is 2-3. The $\alpha=3.93253$ implies this network with relative few "hot nodes" due to the fast decreasing. 
+
+```{r, echo = FALSE, results = "hide"}
+deg <- degree(g, mode = "all")
+deg.dist <- degree.distribution(g)
+F_ <- degree.distribution(g, cumulative = TRUE)
+fit <- fit_power_law(deg + 1)
+```
+```{r alpha, echo = FALSE}
+par(mfrow = c(1,2))
+plot(
+  x = 0:max(deg),
+  y = deg.dist,
+  cex = 1.2,
+  xlab = "Degree",
+  col = 2, type = "l",
+  main = "Degree Distribution"
+)
+points((0:max(deg))^(-fit$alpha),
+  col = rgb(45, 67, 60, 50, maxColorValue = 255)
+)
+plot(
+  x = 1:max(deg),
+  y = log(deg.dist[1:max(deg)+1]),
+  cex = 1.2,
+  xlab = "Degree",
+  col = 2,
+  main = "Degree Distribution (log)"
+)
+```
+```{r popularity, echo = FALSE, results="hide", warning = FALSE}
+in_index <- order(degree(g, mode = "in"), decreasing = TRUE)[1:6]
+in_centrality <- V(g)$id[in_index]
+out_index <- order(degree(g, mode = "out"), decreasing = TRUE)[1:6]
+out_centrality <- V(g)$id[out_index]
+clo_index <- order(closeness(g) * (length(V(g)) - 1), decreasing = TRUE)[1:6]
+closeness <- V(g)$id[clo_index]
+btw_index <- order(betweenness(g, directed = TRUE), decreasing = TRUE)[1:6]
+betweenness <- V(g)$id[btw_index]
+```
+Accoding to this table, we notice that the top 6 most important nodes are different with different measure. Node 155 holds the highest in-degree, node 855 holds the highest out-degree and betweeness and node 293 has the highest closeness. There are still some nodes considered as important in several ways, e.g. node 855.
+
+|Methods|In-degree|Out-degree|Closeness|Betweenness|
+|:---:|:---:|:---:|:---:|:---:|
+|1|155|855|293|855|
+|2|1051|454|117|55|
+|3|641|387|217|1051|
+|4|55|512|418|155|
+|5|963|880|357|454|
+|6|1245|363|1057|387|
+
+# Ranking Pages
+We applied four methods to rank the website pages and the results are as below. Since the old page rank algorithm does not work, we use damping = 0.99 as an approximate solution for classic page rank method. The number of iterations taken by PageRank method grows on increasing the value of $\alpha$ and required more numerical precisions to converge as value of $\alpha\to 1$.  
+```{r pagerank, echo = FALSE, results="hide", warning = FALSE}
+hub_index <- order(hub.score(g)$vector, decreasing = TRUE)[1:10]
+hub_rank <- V(g)$label[hub_index]
+au_index <- order(authority.score(g)$vector, decreasing = TRUE)[1:10]
+au_rank <- V(g)$label[au_index]
+page_index <- order(page.rank(g, damping = 0.99)$vector,
+    decreasing = TRUE
+)[1:10]
+page_rank <- V(g)$label[page_index]
+page_sc_index <- order(page.rank(g, damping = 0.85)$vector,
+    decreasing = TRUE
+)[1:10]
+page_sc_rank <- V(g)$label[page_sc_index]
+page_rank_results <- data.frame(
+    cbind(hub_rank, au_rank, page_rank, page_sc_rank)
+)
+colnames(page_rank_results) <- c(
+    "Hub-score",
+    "Auth-score", "PageRank(Classic)", "PageRank(with s=0.85"
+)
+# write.csv(page_rank_results, "page_rank_results.csv")
+```
+
+|    | Hub\-score                              | Auth\-score                    | PageRank(Classic)    | PageRank(with s=0.85) |
+|----|-----------------------------------------|--------------------------------|------------------------|--------------------------|
+| 1  | politicalstrategy\.org                  | dailykos\.com                  | moorewatch\.com        | dailykos\.com            |
+| 2  | madkane\.com/notable\.html              | talkingpointsmemo\.com         | right\-thinking\.com   | atrios\.blogspot\.com    |
+| 3  | liberaloasis\.com                       | atrios\.blogspot\.com          | dailykos\.com          | instapundit\.com         |
+| 4  | stagefour\.typepad\.com/commonprejudice | washingtonmonthly\.com         | atrios\.blogspot\.com  | blogsforbush\.com        |
+| 5  | bodyandsoul\.typepad\.com               | talkleft\.com                  | instapundit\.com       | talkingpointsmemo\.com   |
+| 6  | corrente\.blogspot\.com                 | juancole\.com                  | talkingpointsmemo\.com | michellemalkin\.com      |
+| 7  | atrios\.blogspot\.com/                  | instapundit\.com               | washingtonmonthly\.com | drudgereport\.com        |
+| 8  | newleftblogs\.blogspot\.com             | yglesias\.typepad\.com/matthew | michellemalkin\.com    | washingtonmonthly\.com   |
+| 9  | tbogg\.blogspot\.com                    | pandagon\.net                  | blogsforbush\.com      | powerlineblog\.com       |
+| 10 | atrios\.blogspot\.com                   | digbysblog\.blogspot\.com      | juancole\.com          | andrewsullivan\.com      |
+
+Accoding to this table, we notice that the top 10 webpages are different with different methods. Website **politicalstrategy\.org** ranks the first via hub score, **dailykos\.com** ranks the first via both authority score and scaled PageRank algorithm with s=0.85 and **moorewatch\.com** ranks the first via classic PageRank algorithm. There are still some websites rank within top 10 using several methods, for example, **washingtonmonthly\.com** appears 3 times in this top 10 lists.  
+
+## Directed to Undirected
+In this part, we consider the undirected version of polblogs graph and explore the features and properties of this network. This network is unconnected with 1490 nodes and 16726 edges. The number of edges is less than that of directed version which informs that there are plenty of two-way connections in the original directed network. This network is with a density of 0.01508, diameter of 9 and average distance of 2.73752.  
+The degree vector is (26, 45,...,18, 1) the distribution of which is as below. The degree distribution seems like a shape of power-law. The p-value obtained by Kolmogorov-Smirnov test is 0.98853 which is way larger than 0.05. Thus, we conclude that the degree distribution holds a shape of power-law and a heavy tail. We estimated the $\alpha=3.69225$ using the method of mle. This version of $\alpha$ is smaller than that of the directed network before for the reason that there are some two-way edges turned into one edge during the process turning directed to undirected. But the $\alpha$ in this undirected graph is still relatively high in real data. This implies that this undirected still have few "hot nodes".  
+```{r, echo=FALSE, results = "hide"}
+ug <- as.undirected(g)
+summary(ug)
+is.connected(ug)
+edge_density(ug)
+diameter(ug)
+mean_distance(ug, unconnected = TRUE)
+```
+```{r, echo = FALSE, results = "hide"}
+udeg <- degree(ug)
+deg.dist <- degree.distribution(ug)
+F_ <- degree.distribution(ug, cumulative = TRUE)
+lm(log(F_[2:(max(udeg) + 1)]) ~ log(1:max(udeg)))
+fitu <- fit_power_law(udeg + 1, 1)
+is.connected(ug)
+clu <- components(ug) 
+clu$csize
+n <- length(clu$csize)
+comp <- decompose.graph(ug) 
+giantIndex <- which.max(sapply(comp, vcount))
+GiantComp <- comp[[giantIndex]]
+```
+
+```{r , echo=FALSE}
+par(mfrow = c(1,2))
+plot(
+  x = 0:max(udeg),
+  y = deg.dist,
+  cex = 1.2,
+  xlab = "Degree",
+  col = 2, type = "l",
+  main = "Degree Distribution (Undirected)"
+)
+points((0:max(udeg)) ^ (-fitu$alpha), col = rgb(45, 67,60, 50, maxColorValue = 255))
+
+plot(
+  x = log(1:(max(udeg) + 1)),
+  y = log(deg.dist[1:(max(udeg) + 1)]),
+  cex = 1.2,
+  xlab = "Degree",
+  col = 2,
+  main = "Degree Distribution of (Log, Undirected)"
+)
+```
+
+This undirected network is still unconnected. There are 268 connected compenents and only two of them holds over 1 nodes. One contains 2 nodes and another contains 1222 nodes. We denote the giant compenent as $\tilde{G}$ the size of which is 1222. Next we consider the coreness. The coreness of each nodes are (22, 31,...,15, 1) the histgram of which is as below. The mean coreness is 12.16, the first quantile is 1 and the third quantile is 23. The maximum coreness is 36. There are 55 nodes in 36-core and 1587 edges in the induced subgraph.  
+```{r kcore, echo=FALSE}
+core <- coreness(ug)
+#summary(core)
+k <- max(core)
+kvertex <- which(coreness(ug) >= k)
+kcore <- induced.subgraph(g, vids = kvertex)
+summary(kcore)
+par(mfrow = c(1,2))
+hist(core)
+plot(kcore,
+  vertex.size = 8, vertex.label = NA,
+  vertex.color = "#a9cdf3ea",
+  main = "36-core Induced subgraph"
+)
+```
+
+# Sampling
+```{r ind_sam, echo=FALSE, results="hide"}
+K <- 500
+vertex_num <- length(V(ug))
+V(ug)$color <- "white"
+
+V(ug)$prop <- "pop"
+set.seed(123)
+sv <- sample(1:vertex_num, K)
+V(ug)[sv]$prop <- "sample" 
+V(ug)$color <- ifelse(V(ug)$prop == "sample", "#a9cdf3ea", "grey")
+V(ug)$frame.color <- "white"
+induced_sam <- induced_subgraph(ug, V(ug)[sv])
+# summary(induced_sam)
+
+edge_density(induced_sam)
+is.connected(induced_sam)
+transitivity(induced_sam, type = "global")
+```
+For the subgraph obtained by induced-subgraph sampling, which is unconnected, the density of this network is 0.01612 and clustering coefficient is 0.21106.In this subgraph, we have 500 nodes and 2011 edges. For the subgraph obtained by incident-subgraph sampling, which is unconnected, the density of this network is 0.00424 and clustering coefficient is 0.00522. In this subgraph, we have 486 nodes and 500 edges.
+```{r incsam, echo = FALSE, results="hide"}
+V(ug)$color <- "white"
+e <- get.edges(ug, E(ug))
+set.seed(123)
+se <- sample(1:length(E(ug)), K)
+col_nodes <- rep("white", length(V(ug)));
+col_nodes[e[se,1]] <- "#a9cdf3ea"
+col_nodes[e[se,2]] <- "#a9cdf3ea"
+V(ug)$color <- col_nodes
+
+incident_sam <- graph_from_data_frame(e[se, ],
+    V(ug)$id[V(ug)$color == "#a9cdf3ea"],
+    directed = FALSE
+)
+# summary(incident_sam)
+
+edge_density(incident_sam)
+is.connected(incident_sam)
+transitivity(incident_sam, type = "global")
+```
+```{r samplot1, echo=FALSE, results="hide"}
+par(mfrow = c(1, 2))
+plot(induced_sam,
+    lo = layout_nicely(ug),
+    vertex.size = 8,
+    vertex.label = NA,
+    vertex.shape = "circle",
+    main = "Induced-subgraph Sampling"
+)
+plot(incident_sam,
+  vertex.color = "#a9cdf3ea", lo = layout_nicely(ug),
+  vertex.frame.color = "white",
+  vertex.size = 8, vertex.label = NA,
+  main = "Incident-subgraph Sampling"
+)
+```
+
+```{r snow_sam, echo=FALSE, results='hide'}
+V(ug)$color <- "white"
+E(ug)$color <- "grey"
+V(ug)$prop <- "pop"
+ev <- get.edges(ug, E(ug))
+s1 <- c(10, 700)
+V(ug)[s1]$prop <- "sample"
+
+while (length(s1) < 150) {
+    n <- length(s1)
+    # se <- xor(V(ug)[ev[, 1]]$prop == "sample", V(ug)[ev[, 2]]$prop == "sample")
+    # E(ug)$color <- ifelse(se, "#5a718c", "grey")
+    for (i in 1:n) {
+      s <- neighbors(ug, s1[i])
+      V(ug)[s]$prop <- "sample"
+      V(ug)$color <- ifelse(V(ug)$prop == "sample", "#a9cdf3ea", "grey")
+      s1 <- union(s1, s)
+    }
+    se <- (V(ug)[ev[, 1]]$prop == "sample" & V(ug)[ev[, 2]]$prop == "sample")
+    E(ug)$color <- ifelse(se, "#5a718c", "grey")
+}
+
+snowball_sam <- graph_from_data_frame(
+    ev[E(ug)$color == "#5a718c", ],
+    s1,
+    directed = FALSE
+)
+
+summary(snowball_sam)
+
+edge_density(snowball_sam)
+is.connected(snowball_sam)
+transitivity(snowball_sam, type = "global")
+```
+For the subgraph obtained by snowball sampling, which is connected, the density of this network is 0.06992 and clustering coefficient is 0.29218. In this subgraph, the center is node 10 and node 700 and there are 526 nodes and 9654 edges included in the subgraph. For the subgraph obtained by respondent-driven sampling, which is connected, the density of this network is 0.00394 and clustering coefficient is 0. In this subgraph, the center is still node 10 and every nodes holds 2 tokens. There are 508 nodes and 507 edges.  
+
+```{r ressam, echo = FALSE, results="hide"}
+k <- 2
+V(ug)$color <- "white"
+V(ug)$prop <- "pop"
+E(ug)$color <- "grey"
+s1 <- 10
+ev <- get.edges(ug, E(ug))
+V(ug)[s1]$prop <- "sample"
+
+while (sum(V(ug)$color == "#a9cdf3ea") < 400) {
+  n <- length(s1)
+  s2 <- c()
+  for (i in 1:n) {
+    s <- s1[i]
+    se <- ((ev[, 1] == s & V(ug)[ev[, 2]]$prop != "sample") |
+      (ev[, 2] == s & V(ug)[ev[, 1]]$prop != "sample"))
+    if (sum(se) <= k) {
+      V(ug)[neighbors(ug, s)]$prop <- "sample"
+      E(ug)$color <- ifelse(se | E(ug)$color == "#5a718c", "#5a718c", "grey")
+      s2 <- union(s2, neighbors(ug, s))
+    }
+    if (sum(se) > k) {
+
+      set.seed(123)
+      nospring <- sample(1:sum(se), sum(se) - k)
+      se[which(se)[nospring]] <- FALSE
+      E(ug)$color <- ifelse(se | E(ug)$color == "#5a718c", "#5a718c", "grey")
+      news <- setdiff(as.vector(ev[se, ]), s)
+      V(ug)[news]$prop <- "sample"
+      s2 <- union(s2, news)
+    }
+    V(ug)$color <- ifelse(V(ug)$prop == "sample", "#a9cdf3ea", "grey")
+  }
+  s1 <- s2
+}
+res_sam <- graph_from_data_frame(ev[E(ug)$color == "#5a718c", ],
+  V(ug)$id[V(ug)$color == "#a9cdf3ea"],
+  directed = FALSE
+)
+summary(res_sam)
+
+edge_density(res_sam)
+is.connected(res_sam)
+transitivity(res_sam, type = "global")
+```
+```{r samplot2, echo=FALSE}
+par(mfrow = c(1, 2))
+plot(snowball_sam,
+  lo = layout_nicely(ug),
+  vertex.size = 8, vertex.label = NA,
+  vertex.frame.color = "white",
+  vertex.color = "#a9cdf3ea",
+  main = "Snowball Sampling"
+)
+plot(res_sam,
+  lo = layout_nicely(ug),
+  vertex.size = 8, vertex.label = NA,
+  vertex.frame.color = "white",
+  vertex.color = "#a9cdf3ea",
+  main = "Respondent-driven Sampling"
+)
+```
+
+The summary of sampling is as below. By the mechanism of these four sampling methods, we notice induced sampling and incident sampling produced unconnected network. For induced sampling, the density and clustering is closest to the original network among four which implies induced-subgraph is closest to the orginal network. For respondent-subgraph and incident-subgraph, the density and clustering coefficient are both very low which imples these two network may be the two wildest samplings among four subgraphs. The clustering coefficient of respondent sampling is 0 which is consist with the mechanism. The snowball-subgraph holds the highest density of network and highest clustering coefficient which implies this subgraph is the densest and contains the most triangles among four. 
+```{r samplesum, echo = FALSE}
+Nodes <- c(
+  length(V(ug)), length(V(induced_sam)), length(V(incident_sam)),
+  length(V(snowball_sam)), length(V(res_sam))
+)
+Edges <- c(
+  length(E(ug)), length(E(induced_sam)), length(E(incident_sam)),
+  length(E(snowball_sam)), length(E(res_sam))
+)
+Density <- c(
+  edge_density(ug), edge_density(induced_sam), edge_density(incident_sam),
+  edge_density(snowball_sam), edge_density(res_sam)
+)
+Connected <- c(
+  is.connected(ug), is.connected(induced_sam), is.connected(incident_sam),
+  is.connected(snowball_sam), is.connected(res_sam)
+)
+Clustering_coefficient<- c(
+  transitivity(ug, type = "global"),
+  transitivity(induced_sam, type = "global"),
+  transitivity(incident_sam, type = "global"),
+  transitivity(snowball_sam, type = "global"),
+  transitivity(res_sam, type = "global")
+)
+sampling <- data.frame(Nodes, Edges, Density, Connected, Clustering_coefficient)
+rownames(sampling) <- c(
+  "Original", "Induced-sam", "Incident-sam",
+  "Snowball-sam", "Respondent-sam"
+)
+#write.csv(sampling, "sampling.csv")
+```
+
+|              |Nodes|Edges|Density    |Connected|Clustering_coefficient|
+|--------------|-----|-----|-----------|---------|----------------------|
+|Original      |1490 |16715|0.015067993|FALSE    |0.225958517           |
+|Induced-sam   |500  |2011 |0.01612024 |FALSE    |0.211059594           |
+|Incident-sam  |486  |500  |0.004242501|FALSE    |0.005221932           |
+|Snowball-sam  |526  |9654 |0.069918523|TRUE     |0.292175067           |
+|Respondent-sam|508  |507  |0.003937008|TRUE     |0                     |
+
+# Partition
+In this part, we conduct the graph partition on the giant compenent with an aim to compare the partition results with the given labels. We use three kinds of methods: partition with removing the edges with highest betweeness, hierarchical clustering and a new method relate to Kmeans.
+
+### Partition Based on Betweeness
+At first, we partition the graph into 2 groups via removing the edges with highest betweeness. The results is as below. One group is of size 1218 and another one is of size 4. 
+```{r parBet, echo = FALSE}
+G <- GiantComp
+V(G)$color <- "white"
+E(G)$color <- "grey"
+bet <- edge_betweenness(G, e = E(G), directed = FALSE)
+gred <- G
+while (components(gred)$no < 2) {
+  bet <- edge_betweenness(gred, e = E(gred), directed = FALSE)
+  e1 <- which.max(bet)
+  epol <- E(gred)
+  gred <- gred - epol[e1]
+}
+V(gred)$color <- ifelse(components(gred)$membership == 1, "#a9cdf3ea", "grey")
+# components(gred)$csize
+```
+```{r parBetPlot, echo = FALSE}
+# png("parBetPlot.png")
+# plot(
+#   gred,
+#   lo = layout_nicely(gred),
+#   vertex.size = 8, vertex.label = NA,
+#   vertex.frame.color = "white",
+#   main = "Partition By Removing Edge with Highest Betweeness"
+# )
+# dev.off()
+```
+!["Partition By Removing Edge with Highest Betweeness"](parBetPlot.png)
+
+Comapre the results with the truth:
+```{r parBet2, echo = FALSE}
+com_table <- table(V(gred)$value, components(gred)$membership)
+error_rate <- function(table) {
+    n <- sum(table[c(1:4)])
+    error <- min(sum(table[c(2, 3)]), n - sum(table[c(2, 3)]))
+    paste("Error rate is:", round(error / n, 5))
+}
+com_table
+error_rate(com_table)
+```
+### Hierarchical Clustering
+#### HC Based on Euclidean Distance
+Next, we apply hierarchical clustering respectively based on Euclidean distance with 3 types of linkages and modularity. The results are as below.
+```{r parhc, echo = FALSE}
+A <- get.adjacency(G)
+A <- as.matrix(A)
+
+graphdist <- function(A) {
+    n <- dim(A)[1]
+    p <- dim(A)[2]
+    distmatrix <- matrix(0, nrow = n, ncol = n)
+    for (i in 1:p) {
+        for (j in 1:i) {
+            distmatrix[i, j] <- sqrt(sum((A[i, -c(i, j)] - A[j, -c(i, j)])^2))
+        }
+    }
+    return(distmatrix)
+}
+# d <- graphdist(A)
+# write.table(d, "graphdist.csv", row.names = FALSE, col.names = FALSE)
+dist <- read.table("graphdist.csv")
+dist <- as.dist(dist)
+```
+- Complete linkage  
+
+```{r parhc_com, echo = FALSE}
+clu_com <- hclust(dist, method = "complete")
+memb_com <- cutree(clu_com, k = 2)
+par(mfrow = c(1,2))
+plot(memb_com, main = "Cluster Dendrogram, Complete")
+plot(clu_com, xlab = "Political Groups", main = "Cluster Dendrogram, Complete")
+rect.hclust(clu_com, k=2, border="#a9cdf3ea")
+```
+
+Compare the results with the truth:
+```{r, parhc_com2, echo = FALSE}
+com_table_hc_com <- table(memb_com, V(G)$value)
+com_table_hc_com
+error_rate(com_table_hc_com)
+```
+- Single linkage  
+
+```{r parhc_sig, echo = FALSE}
+clu_sim <- hclust(dist, method = "single")
+memb_sim <- cutree(clu_sim, k = 2)
+par(mfrow = c(1,2))
+plot(memb_sim, main = "Cluster Dendrogram, Single")
+plot(clu_sim, xlab = "Political Groups", main = "Cluster Dendrogram, Single")
+rect.hclust(clu_sim, k=2, border="#a9cdf3ea")
+```
+
+Compare the results with the truth:
+```{r parhc_sig2, echo = FALSE}
+com_table_hc_sim <- table(memb_sim, V(G)$value)
+com_table_hc_sim
+error_rate(com_table_hc_sim)
+```
+- Average linkage  
+
+```{r parhc_avg, echo = FALSE}
+clu_avg <- hclust(dist, method = "average")
+memb_avg <- cutree(clu_avg, k = 2)
+par(mfrow = c(1, 2))
+plot(memb_avg, main = "Cluster Dendrogram, Average")
+plot(clu_avg, xlab = "Political Groups", main = "Cluster Dendrogram, Average")
+rect.hclust(clu_avg, k=2, border="#a9cdf3ea")
+```
+
+Compare the results with the truth:
+```{r parhc_avg2, echo = FALSE}
+com_table_hc_avg <- table(memb_avg, V(G)$value)
+com_table_hc_avg
+error_rate(com_table_hc_avg)
+```
+According to the results above, we notice that the results obtained by hierarchical clustering is quite distinctive from the truth, especially that with single likage and average linkage. The accuracies of these partition are nearly that of guessing by chance.  
+
+#### HC Based on Modularity
+Furthermore, we apply the graph partition method based on modularity. The results are as below.  
+```{r parmol, echo = FALSE}
+mo_par <- fastgreedy.community(G)
+mo_par2 <- cut_at(mo_par, no = 2)
+mo_par2 <- ifelse(mo_par2 == 1, 1, 0)
+par(mfrow = c(1, 2))
+plot(mo_par2)
+plot(mo_par, G,
+  vertex.size = 5,
+  egde.width = 0.1, vertex.label = NA
+)
+```
+```{r parmol2, echo = FALSE}
+com_table_mol <- table(mo_par2, V(G)$value)
+com_table_mol
+error_rate(com_table_mol)
+cat(
+  "Modularity score of original group:",
+  modularity(G, as.factor(mo_par2), weights = NULL), "\n",
+  "Modularity score of hc with modularity",
+  modularity(G, as.factor(V(G)$value), weights = NULL)
+)
+```
+The result obtained based on hierarchical clustering with modularity are better than that with Euclidean distance. The error rate of this method is relatively low. The modularity of partition results obtained by hc with modularity is close to that of the original partition.  
+
+### Kmeans Method 
+Last but not least, we realize the kmeans method based on the ratio of top 2 eigenvector of the adjacency matrix of giant compenent. By set different random initial nodes, we notice the results could be different. The result with set.seed(123) is as below.  
+```{r parnewplot, echo = FALSE}
+r <- eigen(A)$vectors[, 2] / eigen(A)$vectors[, 1]
+set.seed(124)
+kclu <- kmeans(r, centers = 2)
+V(G)$color <- ifelse(kclu$cluster == 1, "#a9cdf3ea", "grey")
+ev <- get.edges(G, E(G))
+index <- (V(G)[ev[, 1]]$color == "#a9cdf3ea" & V(G)[ev[, 2]]$color == "grey") |
+  (V(G)[ev[, 2]]$color == "#a9cdf3ea" & V(G)[ev[, 1]]$color == "grey")
+plot(G - ev[index, ],
+  vertex.size = 8, vertex.label = NA, 
+  vertex.frame.color = "white",
+  main = "Partition by Kmeans"
+)
+```
+
+Compare the results with the truth:
+```{r parnew, echo = FALSE}
+com_table_km <- table(kclu$cluster, V(G)$value)
+com_table_km
+error_rate(com_table_km)
+```
+The results are much better than that based on betweeness and HC with Euclidean distance. The error rate is relatively lower than that of HC with modularity. Among these methods, this kmeans method hold the best performance.  
+And according to the partition plot, we find that there are two clusters of respectively blue and grey which are relate to two politic groups *Liberal* and *Consevative*. The websites represented by the nodes in these two clusters may respectively be promotation platform of *Liberal* and *Consevative*. And they might be solid supporters of two political group. And there are a group of nodes which are separate from each other and the color of this group is mottled. This implies the websites represented by the nodes in this group may come from individuals who may swing from *Liberal* and *Consevative*.
+
+# Stochastic Block Model
+In this section, we try to fit stochastic block model to this network. R package **blockmodels** is used and fit the data with bernoulli distribution. According to the results below, we notice that nodes in group 1 tend to link the nodes within the group than that in group 2. The nodes in group 2 are sparse and may isolate from each other. The chance that the nodes in group 1 and 2 are linked is relatively low. 
+```{r sbm, echo = FALSE}
+A_ug <- get.adjacency(ug)
+A_ug <- as.matrix(A_ug)
+sbm_model <- BM_bernoulli("SBM", A_ug)
+# sbm_model$estimate()
+# which.max(sbm_model$ICL)
+# round(sbm_model$model_parameters[[2]]$pi, 5)
+estimate <- matrix(c(0.13476, 0.01295, 0.01295, 0.00088), 2, 2, byrow = TRUE)
+estimate
+```
+
+Next we use the underground truth as community labels, under the stochastic block model assumptions, we obtained the mle estimates as below. 
+```{r sbm2, echo = FALSE}
+sbm0 <- delete.vertices(ug, V(ug)[V(ug)$value == 1])
+sbm1 <- delete.vertices(ug, V(ug)[V(ug)$value == 0])
+ev <- get.edges(ug, E(ug))
+e0 <- length(E(sbm0))
+v0 <- length(V(sbm0))
+e1 <- length(E(sbm1))
+v1 <- length(V(sbm1)) 
+index <- (V(ug)$value[ev[, 1]] == 1 & V(ug)$value[ev[, 2]] == 0) |
+  (V(ug)$value[ev[, 2]] == 1 & V(ug)$value[ev[, 1]] == 0)
+e12 <- sum(index)
+b0 <- e0 / (v0 * (v0 - 1) / 2)
+b01 <- e12 / (v0 * v1)
+b1 <- e1 / (v1 * (v1 - 1) / 2)
+mle <- matrix(c(b0, b01, b01, b1), 2, 2)
+mle
+```
+We notice that nodes in group 1 and group 2 are more likely to link with the nodes within their own group other than another one. As for the differences between the results respectively obtained by *blockmodel* and underground truth, we can illustrate in this way: the method used in *blockmodel* wrongly partition the whole network into two 2 groups. One contains most of nodes in 2 clusters which are connected to each other while another one contains the rest of nodes. However, the underground truth is that these two clusters are respectively belong to two communities and they separate the rest of the nodes. The pattern of the underground truth is similarly to that obtained by hierarchical clustering with modularity.
+
